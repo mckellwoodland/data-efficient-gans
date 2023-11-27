@@ -13,6 +13,8 @@ import PIL.Image
 import json
 import torch
 import dnnlib
+import pydicom as dcm
+import SimpleITK as sitk
 
 try:
     import pyspng
@@ -86,7 +88,7 @@ class Dataset(torch.utils.data.Dataset):
         image = self._load_raw_image(self._raw_idx[idx])
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
-        assert image.dtype == np.uint8
+        # assert image.dtype == np.uint8
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
@@ -157,7 +159,7 @@ class ImageFolderDataset(Dataset):
         resolution      = None, # Ensure specific resolution, None = highest available.
         **super_kwargs,         # Additional arguments for the Dataset base class.
     ):
-        self._path = dnnlib.util.open_url(path, return_filename=True)
+        self._path = path
         self._zipfile = None
 
         if os.path.isdir(self._path):
@@ -170,6 +172,9 @@ class ImageFolderDataset(Dataset):
             raise IOError('Path must point to a directory or zip')
 
         PIL.Image.init()
+        PIL.Image.EXTENSION['.dcm'] = 'Dicom' 
+        PIL.Image.EXTENSION['.gz']= 'Nifti gz'
+        PIL.Image.EXTENSION['.nii'] = 'Nifti'
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
@@ -212,6 +217,13 @@ class ImageFolderDataset(Dataset):
         with self._open_file(fname) as f:
             if pyspng is not None and self._file_ext(fname) == '.png':
                 image = pyspng.load(f.read())
+            elif self._file_ext(fname) == '.dcm':
+                image = dcm.dcmread(os.path.join(self._path, fname))
+                image = np.array(image.pixel_array, dtype=np.float32)
+            elif self._file_ext(fname) in ['.gz','.nii']:
+                image = sitk.ReadImage(os.path.join(self._path, fname))
+                image = sitk.GetArrayFromImage(image)
+                image = np.array(image, dtype=np.float32)            
             else:
                 image = np.array(PIL.Image.open(f))
         if image.ndim == 2:
